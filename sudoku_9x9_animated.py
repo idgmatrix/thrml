@@ -181,7 +181,7 @@ def solve_sudoku_with_visualization():
     
     # Create figure and axes for visualization
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7))
-    plt.ion()  # Turn on interactive mode
+    #plt.ion()  # Turn on interactive mode
     
     # Draw initial state
     draw_sudoku_grid(ax1, current_grid, "Initial Sudoku")
