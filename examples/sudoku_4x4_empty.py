@@ -5,21 +5,11 @@ import random
 
 # 4x4 mini-sudoku setup (symbols 1..4, 2x2 boxes)
 # 0 denotes empty cell
-'''
 puzzle = np.array([
     [0, 0, 0, 0],
     [0, 0, 0, 0],
     [0, 0, 0, 0],
     [0, 0, 0, 0]
-], dtype=int)
-'''
-# You can try a non-trivial puzzle by uncommenting below
-
-puzzle = np.array([
-    [1, 0, 0, 0],
-    [0, 0, 2, 0],
-    [0, 3, 0, 0],
-    [0, 0, 0, 4]
 ], dtype=int)
 
 N = 4
@@ -93,12 +83,32 @@ def project_clues(P):
     return P
 
 
+def initialize_probabilities():
+    P_init = np.ones((N, N, N), dtype=float) / N
+    # For empty puzzles, add small random perturbations to break symmetry
+    if np.count_nonzero(puzzle) == 0:
+        noise = np.random.uniform(0.1, 0.9, (N, N, N))
+        P_init = P_init * 0.5 + noise * 0.5
+        # Renormalize per cell
+        for r in range(N):
+            for c in range(N):
+                P_init[r, c, :] /= P_init[r, c, :].sum()
+    # Apply clue constraints
+    for r in range(N):
+        for c in range(N):
+            if puzzle[r, c] != 0:
+                val = puzzle[r, c] - 1
+                P_init[r, c, :] = 0.0
+                P_init[r, c, val] = 1.0
+    return P_init
+
+
 # Annealing parameters
 T0 = 1.0
-Tmin = 0.01
-steps = 200
+Tmin = 0.001
+steps = 1000  # increased steps for better convergence
 alpha = (Tmin / T0) ** (1.0 / steps)
-eta = 0.8  # step size
+eta = 0.3  # reduced step size for stability
 
 # Visualization setup
 fig, axes = plt.subplots(1, 2, figsize=(8, 4))
@@ -120,6 +130,9 @@ def cell_entropy(P):
 
 # Cost monitor
 costs = []
+
+# Better initialization
+P = initialize_probabilities()
 
 # Initialize plots
 ent = cell_entropy(P)
@@ -158,16 +171,49 @@ def total_penalty(P):
     return (cell_res**2).sum() + (row_res**2).sum() + (col_res**2).sum() + box_res_acc
 
 
-T = T0
+def is_valid_solution(P):
+    """Check if current P represents a valid sudoku solution"""
+    # Get deterministic assignment
+    assignment = P.argmax(axis=2)
+    
+    # Check cell constraints
+    for r in range(N):
+        for c in range(N):
+            if P[r, c, assignment[r, c]] < 0.9:  # Not confident enough
+                return False
+    
+    # Check row constraints
+    for r in range(N):
+        if len(set(assignment[r, :])) != N:
+            return False
+            
+    # Check column constraints
+    for c in range(N):
+        if len(set(assignment[:, c])) != N:
+            return False
+            
+    # Check box constraints
+    box_size = 2
+    for br in range(0, N, box_size):
+        for bc in range(0, N, box_size):
+            box_vals = assignment[br:br+box_size, bc:bc+box_size].flatten()
+            if len(set(box_vals)) != N:
+                return False
+                
+    return True
 
+
+T = T0
 
 def update(frame):
     global P, T
     # compute local penalties (acting like gradients)
     pen = compute_penalties(P)
-    # noisy descent
-    noise = np.random.normal(scale=T, size=P.shape)
-    P = P - eta * pen + noise * 0.1
+    
+    # Modified update rule with adaptive noise
+    noise_scale = min(T, 0.1)  # Reduce noise as temperature decreases
+    noise = np.random.normal(scale=noise_scale, size=P.shape)
+    P = P - eta * pen + noise * 0.05  # Reduced noise contribution
     P = np.clip(P, 1e-6, None)
     P = project_clues(P)
 
@@ -192,8 +238,14 @@ def update(frame):
     line_cost.set_data(range(len(costs)), costs)
     # auto-scale y as it descends
     ymin = 0
-    ymax = max(5.0, np.max(costs[-50:]) * 1.2)
+    ymax = max(5.0, np.max(costs[-50:]) * 1.2) if costs else 30
     ax_cost.set_ylim(ymin, ymax)
+
+    # Check for early convergence
+    if len(costs) > 10 and np.mean(costs[-10:]) < 0.01:
+        print(f"Converged at step {frame}")
+        # Stop animation early
+        ani.event_source.stop()
 
     # cool down
     T *= alpha
